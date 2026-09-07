@@ -1,11 +1,15 @@
 #include "config/config.hpp"
 #include "optimizer/jastrow_optimizer.hpp"
+#include "output_writer/output_writer.hpp"
 #include "simulation/simulation.hpp"
 
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
+#include <fstream>
+#include <memory>
 #include <print>
 #include <string_view>
 
@@ -68,6 +72,31 @@ void print_error(const std::string_view message) {
   std::print(stderr, "Exception: {}\n", message);
 }
 
+// Recording is opt-in: Simulation::run() takes a slower per-proposal path
+// whenever an OutputWriter is present (needed to emit a frame per proposal),
+// instead of the fast resident kernel. Set VMC_OUTPUT to a file path to
+// trade throughput for a trajectory that render.py can play back.
+std::unique_ptr<OutputWriter> make_recording_writer(std::ofstream& bin_out) {
+  const char* const path{std::getenv("VMC_OUTPUT")};
+  if (path == nullptr || *path == '\0') {
+    return nullptr;
+  }
+
+  const std::filesystem::path output_path{path};
+  if (output_path.has_parent_path()) {
+    std::filesystem::create_directories(output_path.parent_path());
+  }
+
+  bin_out.open(output_path, std::ios::binary | std::ios::trunc);
+  if (!bin_out) {
+    std::print(stderr, "Warning: could not open {} for writing\n", path);
+    return nullptr;
+  }
+
+  std::print("Recording trajectory to {}\n", path);
+  return make_output_writer(OutputFormat::BIN, bin_out);
+}
+
 }
 
 int main() {
@@ -82,9 +111,12 @@ int main() {
 
     print_config(config);
 
+    std::ofstream bin_out;
+    auto output_writer{make_recording_writer(bin_out)};
+
     const auto start{std::chrono::steady_clock::now()};
 
-    Simulation simulation{config};
+    Simulation simulation{config, std::move(output_writer)};
     const auto summary{simulation.run()};
 
     const auto end{std::chrono::steady_clock::now()};

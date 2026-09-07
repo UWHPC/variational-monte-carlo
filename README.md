@@ -26,6 +26,49 @@ Options can be combined, for example:
 
 `./scripts/run.sh --cuda --fp32 --ffast-math`
 
+## Visualize
+
+`render.py` reads a recorded trajectory and plays it back in
+[Rerun](https://rerun.io) — particle positions in the periodic box, plus
+local energy, running mean, standard error, and acceptance rate over time.
+
+By default `./scripts/run.sh` does not record: `Simulation::run()` takes a
+much faster resident-kernel path when nothing needs a per-proposal position
+snapshot. Recording is opt-in via the `VMC_OUTPUT` environment variable,
+which trades that speed for a trajectory:
+
+`VMC_OUTPUT=output/vmc.bin ./scripts/run.sh`
+
+(`main.cu` creates `output/` itself if it doesn't exist.)
+
+One-time setup:
+
+`python3 -m venv .venv` \
+`.venv/bin/pip install -r requirements.txt`
+
+Then visualize the result:
+
+`.venv/bin/python render.py --input output/vmc.bin`
+
+Script parameters:
+
+- `--input <PATH>` (default: `output/vmc.bin`)
+- `--stride <N>` render every Nth frame (default: `1`)
+
+### Troubleshooting: blank viewer window on WSL2
+
+WSLg can fall back to software rendering for the native Rerun viewer
+window, which comes up but never actually paints anything. If that
+happens, serve the recording over Rerun's web viewer instead — it renders
+in an ordinary browser tab and sidesteps WSLg entirely. In one terminal:
+
+`rerun --serve-web --bind 127.0.0.1`
+
+Leave that running, then in another terminal run `render.py` as above; it
+detects the running server and streams to it instead of spawning a
+(broken) native window. Open the URL the first command printed
+(`http://127.0.0.1:9090?url=...`) in any browser.
+
 ## Debug
 
 Build and run with debug instrumentation:
