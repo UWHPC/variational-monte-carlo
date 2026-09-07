@@ -159,7 +159,6 @@ private:
   xpu::buffer<xpu::random::generator> walker_rng_;
   xpu::buffer<StepResult> step_result_;
   xpu::buffer<fp_t> local_energies_;
-  xpu::buffer<View> walker_views_;
   xpu::buffer<SweepResult> sweep_result_;
   xpu::buffer<WalkerState> walker_states_;
   xpu::buffer<RunResult> run_result_;

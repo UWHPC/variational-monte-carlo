@@ -769,15 +769,15 @@ void cudaInitializeWalkerPositions(
 
 __global__
 void cudaInitializePositions(
-  const Simulation::View* simulations,
-  std::size_t walker_count,
+  Simulation::BatchView simulations,
   fp_t box_length
 ) {
   const auto [walker]{xpu::global_index<1>()};
-  if (walker >= walker_count) { return; }
+  if (walker >= simulations.walker_count()) { return; }
 
+  const auto simulation{simulations.view(walker)};
   stencil::simulation::initialize_walker_positions(
-    simulations[walker],
+    simulation,
     box_length
   );
 }
@@ -802,14 +802,15 @@ void cudaMetropolisStep(
 
 __global__
 void cudaMetropolisSweep(
-  Simulation::View* simulations,
-  std::size_t walker_count,
+  Simulation::BatchView simulations,
   std::size_t proposals_per_walker,
   fp_t step_size,
   Simulation::SweepResult* result
 ) {
   const auto walker{scast<std::size_t>(blockIdx.x)};
-  if (walker >= walker_count) { return; }
+  if (walker >= simulations.walker_count()) { return; }
+
+  const auto simulation{simulations.view(walker)};
 
   __shared__ Simulation::MetropolisScratch scratch;
   __shared__ Simulation::SweepResult local_result;
@@ -821,7 +822,7 @@ void cudaMetropolisSweep(
 
   for (auto proposal{0uz}; proposal < proposals_per_walker; ++proposal) {
     stencil::simulation::metropolis_step(
-      simulations[walker],
+      simulation,
       step_size,
       scratch
     );
@@ -848,31 +849,31 @@ void cudaMetropolisSweep(
 
 __global__
 void cudaMeasureWalkers(
-  Simulation::View* simulations,
-  std::size_t walker_count
+  Simulation::BatchView simulations
 ) {
   const auto walker{scast<std::size_t>(blockIdx.x)};
-  if (walker >= walker_count) { return; }
+  if (walker >= simulations.walker_count()) { return; }
 
-  stencil::simulation::measure_walker(simulations[walker]);
+  const auto simulation{simulations.view(walker)};
+  stencil::simulation::measure_walker(simulation);
 }
 
 __global__
 void cudaRunWalkers(
-  const Simulation::View* simulations,
+  Simulation::BatchView simulations,
   Simulation::WalkerState* states,
-  std::size_t walker_count,
   Simulation::RunConfig config
 ) {
   const auto walker{scast<std::size_t>(blockIdx.x)};
-  if (walker >= walker_count) {
+  if (walker >= simulations.walker_count()) {
     return;
   }
 
+  const auto simulation{simulations.view(walker)};
   __shared__ Simulation::MetropolisScratch scratch;
 
   stencil::simulation::run_walker(
-    simulations[walker],
+    simulation,
     states[walker],
     config,
     scratch
@@ -980,10 +981,11 @@ inline void initialize_positions(
 }
 
 inline void initialize_positions(
-  const Simulation::View* simulations,
-  std::size_t walker_count,
+  Simulation::BatchView simulations,
   fp_t box_length
 ) {
+  const auto walker_count{simulations.walker_count()};
+
 #if defined(XPU_CUDA)
   constexpr dim3 initializePositionsThreads{256u};
   const dim3 initializePositionsBlocks{
@@ -994,14 +996,14 @@ inline void initialize_positions(
     initializePositionsBlocks, initializePositionsThreads
   >>>(
     simulations,
-    walker_count,
     box_length
   );
   xpu::cu_check(cudaGetLastError());
 #else
   for (auto walker{0uz}; walker < walker_count; ++walker) {
+    const auto simulation{simulations.view(walker)};
     stencil::simulation::initialize_walker_positions(
-      simulations[walker],
+      simulation,
       box_length
     );
   }
@@ -1039,12 +1041,12 @@ inline Simulation::StepResult metropolis_step(
 }
 
 inline void metropolis_sweep(
-  Simulation::View* simulations,
-  std::size_t walker_count,
+  Simulation::BatchView simulations,
   std::size_t proposals_per_walker,
   fp_t step_size,
   Simulation::SweepResult* result
 ) {
+  const auto walker_count{simulations.walker_count()};
   xpu::memset(result, 0, sizeof(Simulation::SweepResult));
 
 #if defined(XPU_CUDA)
@@ -1054,7 +1056,6 @@ inline void metropolis_sweep(
     metropolisSweepBlocks, metropolisSweepThreads
   >>>(
     simulations,
-    walker_count,
     proposals_per_walker,
     step_size,
     result
@@ -1062,12 +1063,13 @@ inline void metropolis_sweep(
   xpu::cu_check(cudaGetLastError());
 #else
   for (auto walker{0uz}; walker < walker_count; ++walker) {
+    const auto simulation{simulations.view(walker)};
     Simulation::SweepResult local_result{};
 
     for (auto proposal{0uz}; proposal < proposals_per_walker; ++proposal) {
       Simulation::MetropolisScratch scratch{};
       stencil::simulation::metropolis_step(
-        simulations[walker],
+        simulation,
         step_size,
         scratch
       );
@@ -1083,33 +1085,35 @@ inline void metropolis_sweep(
 }
 
 inline void measure_walkers(
-  Simulation::View* simulations,
-  std::size_t walker_count
+  Simulation::BatchView simulations
 ) {
+  const auto walker_count{simulations.walker_count()};
+
 #if defined(XPU_CUDA)
   dim3 measureWalkersThreads{256u};
   dim3 measureWalkersBlocks{scast<unsigned int>(walker_count)};
   cudaMeasureWalkers<<<
     measureWalkersBlocks, measureWalkersThreads
   >>>(
-    simulations,
-    walker_count
+    simulations
   );
   xpu::cu_check(cudaGetLastError());
 #else
   for (auto walker{0uz}; walker < walker_count; ++walker) {
-    stencil::simulation::measure_walker(simulations[walker]);
+    const auto simulation{simulations.view(walker)};
+    stencil::simulation::measure_walker(simulation);
   }
 #endif
 }
 
 inline Simulation::RunResult run_walkers(
-  const Simulation::View* simulations,
+  Simulation::BatchView simulations,
   Simulation::WalkerState* states,
-  std::size_t walker_count,
   const Simulation::RunConfig& config,
   Simulation::RunResult* result_storage
 ) {
+  const auto walker_count{simulations.walker_count()};
+
 #if defined(XPU_CUDA)
   constexpr dim3 runWalkersThreads{256u};
   const dim3 runWalkersBlocks{scast<unsigned int>(walker_count)};
@@ -1119,7 +1123,6 @@ inline Simulation::RunResult run_walkers(
   >>>(
     simulations,
     states,
-    walker_count,
     config
   );
   xpu::cu_check(cudaGetLastError());
@@ -1140,10 +1143,11 @@ inline Simulation::RunResult run_walkers(
     #pragma omp parallel for num_threads(config.num_threads)
   #endif
   for (auto walker = 0uz; walker < walker_count; ++walker) {
+    const auto simulation{simulations.view(walker)};
     Simulation::MetropolisScratch scratch{};
 
     stencil::simulation::run_walker(
-      simulations[walker],
+      simulation,
       states[walker],
       config,
       scratch

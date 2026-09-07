@@ -30,7 +30,6 @@ Simulation::Simulation(
 , walker_rng_{config_.num_walkers}
 , step_result_{config_.num_walkers}
 , local_energies_{config_.num_walkers}
-, walker_views_{config_.num_walkers}
 , sweep_result_{1uz}
 , walker_states_{config_.num_walkers}
 , run_result_{1uz}
@@ -41,15 +40,6 @@ Simulation::Simulation(
     config_.master_seed,
     walker_id * config_.num_walkers
   );
-
-  std::vector<View> views{};
-  views.reserve(config_.num_walkers);
-
-  for (auto walker{0uz}; walker < config_.num_walkers; ++walker) {
-    views.emplace_back(this->view(walker));
-  }
-
-  xpu::copy_n(walker_views_.data(), views.data(), views.size());
 }
 
 const std::array<std::vector<fp_t>, idx(Axis::NUM)>& Simulation::positions_snapshot() {
@@ -67,8 +57,7 @@ void Simulation::initialize_positions() {
   constexpr auto max_attempts{100uz};
 
   kernel::simulation::initialize_positions(
-    walker_views_.data(),
-    particles_.walker_count(),
+    this->batch_view(),
     config_.box_length
   );
 
@@ -120,8 +109,7 @@ Simulation::StepResult Simulation::metropolis_step() {
 
 Simulation::SweepResult Simulation::metropolis_sweep() {
   kernel::simulation::metropolis_sweep(
-    walker_views_.data(),
-    particles_.walker_count(),
+    this->batch_view(),
     particles_.count(),
     config_.step_size,
     sweep_result_.data()
@@ -133,10 +121,7 @@ Simulation::SweepResult Simulation::metropolis_sweep() {
 }
 
 void Simulation::measure_walkers() {
-  kernel::simulation::measure_walkers(
-    walker_views_.data(),
-    particles_.walker_count()
-  );
+  kernel::simulation::measure_walkers(this->batch_view());
 }
 
 void Simulation::warmup() {
@@ -279,9 +264,8 @@ Simulation::MeasurementSummary Simulation::run() {
 
     const auto result{
       kernel::simulation::run_walkers(
-        walker_views_.data(),
+        this->batch_view(),
         walker_states_.data(),
-        particles_.walker_count(),
         run_config,
         run_result_.data()
       )

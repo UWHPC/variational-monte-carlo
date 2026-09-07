@@ -790,13 +790,16 @@ inline void initialize(
 } // namespace
 
 inline void initialize(
-  const EnergyTracker::InitializationView* states,
-  std::size_t walker_count,
-  std::size_t particle_count,
-  std::size_t g_count,
+  EnergyTracker::InitializationBatchView states,
   std::size_t num_threads
 ) noexcept {
-  initialize<InitializationMode::ALL>(states, walker_count, particle_count, g_count, num_threads);
+  initialize<InitializationMode::ALL>(
+    states,
+    states.energy.walker_count(),
+    states.particles.count(),
+    states.energy.num_g_vectors,
+    num_threads
+  );
 }
 
 inline void initialize_reciprocal_energy(EnergyTracker::InitializationView state) noexcept {

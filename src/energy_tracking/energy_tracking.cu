@@ -23,7 +23,6 @@ EnergyTracker::EnergyTracker(
 , walker_data_{num_walkers, 0uz}
 , walker_scalars_{num_walkers}
 , reduction_scratch_{num_walkers}
-, initialization_views_{num_walkers}
 , reciprocal_partials_{0uz}
 , real_partials_{0uz}
 , reciprocal_partial_count_{}
@@ -147,17 +146,11 @@ void EnergyTracker::validate_initialization(const Particles& particles, std::siz
 }
 
 void EnergyTracker::initialize(Particles& particles, std::size_t num_threads) {
-  validate_initialization(particles, num_threads);
+  this->validate_initialization(particles, num_threads);
 
-  std::vector<InitializationView> views{};
-  views.reserve(num_walkers_);
-  for (auto walker{0uz}; walker < num_walkers_; ++walker) {
-    views.emplace_back(initialization_view(particles.view(walker), walker));
-  }
-  if (views.empty()) { return; }
-  xpu::copy_n(initialization_views_.data(), views.data(), views.size());
   kernel::energy::initialize(
-    initialization_views_.data(), num_walkers_, num_particles_, num_g_vectors_, num_threads
+    this->initialization_batch_view(particles.batch_view()),
+    num_threads
   );
 }
 

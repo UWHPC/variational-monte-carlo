@@ -111,14 +111,53 @@ public:
     fp_t* real_partials{};
   };
 
+  struct InitializationBatchView {
+    BatchView energy{};
+    Particles::BatchView particles{};
+
+    fp_t* reciprocal_partials{};
+    fp_t* real_partials{};
+    std::size_t reciprocal_partial_count{};
+    std::size_t real_partial_count{};
+
+    [[nodiscard]] CUDA_CALLABLE
+    InitializationView view(std::size_t walker) noexcept {
+      return {
+        energy.view(walker),
+        particles.view(walker),
+        reciprocal_partials + walker * reciprocal_partial_count,
+        real_partials + walker * real_partial_count
+      };
+    }
+
+    [[nodiscard]] CUDA_CALLABLE
+    InitializationView operator[](std::size_t walker) noexcept {
+      return this->view(walker);
+    }
+  };
+
 private:
-  xpu::buffer<InitializationView> initialization_views_;
   xpu::buffer<fp_t> reciprocal_partials_;
   xpu::buffer<fp_t> real_partials_;
   std::size_t reciprocal_partial_count_;
   std::size_t real_partial_count_;
 
   InitializationView initialization_view(Particles::View particles, std::size_t walker) noexcept;
+
+  [[nodiscard]]
+  InitializationBatchView initialization_batch_view(
+    Particles::BatchView particles
+  ) noexcept {
+    return {
+      this->batch_view(),
+      particles,
+      reciprocal_partials_.data(),
+      real_partials_.data(),
+      reciprocal_partial_count_,
+      real_partial_count_
+    };
+  }
+
   void initialize_reduction_storage();
   void validate_initialization(const Particles& particles, std::size_t num_threads) const;
 
