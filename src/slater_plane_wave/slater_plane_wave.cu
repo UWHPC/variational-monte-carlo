@@ -260,8 +260,8 @@ fp_t SlaterPlaneWave::log_abs_det(
   std::size_t walker
 ) {
   auto slater{this->view(walker)};
-  kernel::slater::build_trig_cache(slater, particles);
 
+  kernel::slater::build_trig_cache(slater, particles);
   kernel::slater::build_determinant(slater);
 
   xpu::copy_n(
@@ -270,10 +270,14 @@ fp_t SlaterPlaneWave::log_abs_det(
     this->matrix_size()
   );
 
+  return this->factorize(walker);
+}
+
+fp_t SlaterPlaneWave::factorize(std::size_t walker) {
+  auto slater{this->view(walker)};
+
   const auto factorization_status{
-    lu_factorization_.factorize(
-      this->lower_upper(walker)
-    )
+    lu_factorization_.factorize(slater.lower_upper)
   };
   if (factorization_status == xpu::linalg::status::singular) {
     return -std::numeric_limits<fp_t>::infinity();
@@ -287,13 +291,13 @@ fp_t SlaterPlaneWave::log_abs_det(
   }
 
   lu_factorization_.invert(
-    this->lower_upper(walker),
-    this->inv_determinant(walker)
+    slater.lower_upper,
+    slater.inv_determinant
   );
   xpu::linalg::transpose_square(
-    this->inv_determinant(walker),
-    this->num_orbitals(),
-    this->matrix_row_stride()
+    slater.inv_determinant,
+    slater.num_orbitals,
+    slater.matrix_row_stride
   );
 
   return log_abs_det;
