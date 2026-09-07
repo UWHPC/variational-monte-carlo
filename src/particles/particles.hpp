@@ -23,6 +23,34 @@ public:
     xpu::soa_view<fp_t, idx(Derivatives::NUM)> derivatives{nullptr, 0uz};
   };
 
+  struct BatchView {
+    xpu::soa_batch_view<fp_t, idx(Axis::NUM)> pos{
+      nullptr, 0uz, 0uz, 0uz
+    };
+    xpu::soa_batch_view<fp_t, idx(Derivatives::NUM)> derivatives{
+      nullptr, 0uz, 0uz, 0uz
+    };
+
+    [[nodiscard]] CUDA_CALLABLE
+    std::size_t count() const noexcept {
+      return pos.element_count();
+    }
+
+    [[nodiscard]] CUDA_CALLABLE
+    std::size_t walker_count() const noexcept {
+      return pos.batch_count();
+    }
+
+    [[nodiscard]] CUDA_CALLABLE
+    View view(std::size_t walker) noexcept {
+      return {
+        this->count(),
+        pos.view(walker),
+        derivatives.view(walker)
+      };
+    }
+  };
+
   explicit Particles(
     std::size_t num_particles,
     std::size_t num_walkers = 1uz
@@ -66,11 +94,15 @@ public:
   }
 
   [[nodiscard]]
-  View view(std::size_t walker = 0uz) noexcept {
+  BatchView batch_view() noexcept {
     return {
-      this->count(),
-      this->pos(walker),
-      this->derivatives(walker)
+      data_.view<idx(Axis::NUM), idx(ArrayIndex::POS)>(),
+      data_.view<idx(Derivatives::NUM), idx(ArrayIndex::DERIVATIVES)>()
     };
+  }
+
+  [[nodiscard]]
+  View view(std::size_t walker = 0uz) noexcept {
+    return this->batch_view().view(walker);
   }
 };
