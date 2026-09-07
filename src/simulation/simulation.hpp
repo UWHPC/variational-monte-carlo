@@ -101,6 +101,33 @@ public:
     fp_t* local_energy{};
   };
 
+  struct BatchView {
+    Particles::BatchView particles{};
+    WaveFunction::BatchView wave_function{};
+    EnergyTracker::BatchView energy_tracker{};
+
+    xpu::random::generator* generators{};
+    StepResult* step_results{};
+    fp_t* local_energies{};
+
+    [[nodiscard]] CUDA_CALLABLE
+    std::size_t walker_count() const noexcept {
+      return particles.walker_count();
+    }
+
+    [[nodiscard]] CUDA_CALLABLE
+    View view(std::size_t walker) noexcept {
+      return {
+        particles.view(walker),
+        wave_function.view(walker),
+        energy_tracker.view(walker),
+        generators + walker,
+        step_results + walker,
+        local_energies + walker
+      };
+    }
+  };
+
   struct MeasurementSummary {
     fp_t mean_energy;
     std::optional<fp_t> standard_error;
@@ -147,15 +174,20 @@ public:
   );
 
   [[nodiscard]]
-  View view(std::size_t walker = 0uz) noexcept {
+  BatchView batch_view() noexcept {
     return {
-      particles_.view(walker),
-      wave_function_.view(walker),
-      energy_tracker_.view(walker),
-      walker_rng_.data() + walker,
-      step_result_.data() + walker,
-      local_energies_.data() + walker
+      particles_.batch_view(),
+      wave_function_.batch_view(),
+      energy_tracker_.batch_view(),
+      walker_rng_.data(),
+      step_result_.data(),
+      local_energies_.data()
     };
+  }
+
+  [[nodiscard]]
+  View view(std::size_t walker = 0uz) noexcept {
+    return this->batch_view().view(walker);
   }
 
   MeasurementSummary run();

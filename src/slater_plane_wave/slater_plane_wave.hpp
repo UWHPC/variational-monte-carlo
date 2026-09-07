@@ -83,6 +83,66 @@ public:
     fp_t* cos_saved{};
   };
 
+  struct BatchView {
+    std::size_t num_orbitals{};
+    std::size_t num_unique_k{};
+    std::size_t trig_row_stride{};
+    std::size_t matrix_row_stride{};
+
+    xpu::soa_view<fp_t, idx(Axis::NUM)> k_vector{nullptr, 0uz};
+    const std::size_t* orbital_k_index{};
+    const std::uint8_t* orbital_type{};
+
+    xpu::soa_batch_view<fp_t, NUM_MATRIX> matrices{
+      nullptr, 0uz, 0uz, 0uz
+    };
+    xpu::soa_batch_view<fp_t, NUM_WALKER_VECTORS> walker_vectors{
+      nullptr, 0uz, 0uz, 0uz
+    };
+    xpu::soa_batch_view<fp_t, NUM_TRIG_ARRAYS> trig_cache{
+      nullptr, 0uz, 0uz, 0uz
+    };
+    xpu::soa_batch_view<fp_t, NUM_SCRATCH_TRIG> trig_scratch{
+      nullptr, 0uz, 0uz, 0uz
+    };
+
+    fp_t* reduction_scratch{};
+
+    [[nodiscard]] CUDA_CALLABLE
+    std::size_t walker_count() const noexcept {
+      return matrices.batch_count();
+    }
+
+    [[nodiscard]] CUDA_CALLABLE
+    View view(std::size_t walker) noexcept {
+      auto matrix{matrices.view(walker)};
+      auto vectors{walker_vectors.view(walker)};
+      auto cache{trig_cache.view(walker)};
+      auto scratch{trig_scratch.view(walker)};
+
+      return {
+        num_orbitals,
+        num_unique_k,
+        trig_row_stride,
+        matrix_row_stride,
+        k_vector,
+        orbital_k_index,
+        orbital_type,
+        matrix[D],
+        matrix[INV_D],
+        matrix[LU],
+        reduction_scratch + walker,
+        vectors[SOLUTION],
+        vectors[NEW_ROW],
+        vectors[INV_D_COL],
+        cache[SIN_CACHE],
+        cache[COS_CACHE],
+        scratch[SIN_SAVED],
+        scratch[COS_SAVED]
+      };
+    }
+  };
+
   explicit SlaterPlaneWave(const Particles& particles, fp_t box_length);
 
   SlaterPlaneWave(const SlaterPlaneWave&) = delete;
@@ -197,7 +257,7 @@ public:
   ) noexcept;
 
   [[nodiscard]]
-  View view(std::size_t walker = 0uz) noexcept {
+  BatchView batch_view() noexcept {
     return {
       this->num_orbitals(),
       this->num_unique_k(),
@@ -206,18 +266,17 @@ public:
       this->k_vector(),
       this->orbital_k_index(),
       this->orbital_type(),
-      this->determinant(walker),
-      this->inv_determinant(walker),
-      this->lower_upper(walker),
-      this->reduction_scratch(walker),
-      this->solution(walker),
-      this->new_row(walker),
-      this->inv_d_col(walker),
-      this->sin_cache(walker),
-      this->cos_cache(walker),
-      trig_scratch_.view<1uz, SIN_SAVED>(walker)[0uz],
-      trig_scratch_.view<1uz, COS_SAVED>(walker)[0uz]
+      matrices_.view(),
+      walker_vectors_.view(),
+      trig_cache_.view(),
+      trig_scratch_.view(),
+      reduction_scratch_.data()
     };
+  }
+
+  [[nodiscard]]
+  View view(std::size_t walker = 0uz) noexcept {
+    return this->batch_view().view(walker);
   }
 
 private:

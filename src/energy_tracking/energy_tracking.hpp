@@ -59,6 +59,51 @@ public:
     fp_t* reduction_scratch{};
   };
 
+  struct BatchView {
+    fp_t box_length{};
+    std::size_t num_g_vectors{};
+    fp_t ewald_alpha{};
+    fp_t ewald_correction{};
+    fp_t ewald_background{};
+
+    xpu::soa_view<fp_t, idx(Axis::NUM)> g_vector{nullptr, 0uz};
+    const fp_t* g_weights{};
+
+    xpu::soa_batch_view<fp_t, idx(WalkerArray::NUM_ARRAYS)> walker_data{
+      nullptr, 0uz, 0uz, 0uz
+    };
+    xpu::soa_view<fp_t, idx(WalkerScalar::NUM_ARRAYS)> walker_scalars{
+      nullptr, 0uz
+    };
+
+    fp_t* reduction_scratch{};
+
+    [[nodiscard]] CUDA_CALLABLE
+    std::size_t walker_count() const noexcept {
+      return walker_data.batch_count();
+    }
+
+    [[nodiscard]] CUDA_CALLABLE
+    View view(std::size_t walker) noexcept {
+      auto data{walker_data.view(walker)};
+
+      return {
+        box_length,
+        num_g_vectors,
+        ewald_alpha,
+        ewald_correction,
+        ewald_background,
+        g_vector,
+        g_weights,
+        data[idx(WalkerArray::S_REAL)],
+        data[idx(WalkerArray::S_IMAG)],
+        walker_scalars[idx(WalkerScalar::V_REAL)] + walker,
+        walker_scalars[idx(WalkerScalar::V_RECIP)] + walker,
+        reduction_scratch + walker
+      };
+    }
+  };
+
   struct InitializationView {
     View energy{};
     Particles::View particles{};
@@ -132,7 +177,7 @@ public:
   }
 
   [[nodiscard]]
-  View view(std::size_t walker = 0uz) noexcept {
+  BatchView batch_view() noexcept {
     return {
       box_length_,
       this->num_g_vectors(),
@@ -141,12 +186,15 @@ public:
       ewald_background_,
       this->g_vector(),
       this->g_weights(),
-      this->sum_real(walker),
-      this->sum_imag(walker),
-      walker_scalars_[idx(WalkerScalar::V_REAL)] + walker,
-      walker_scalars_[idx(WalkerScalar::V_RECIP)] + walker,
-      this->reduction_scratch(walker)
+      walker_data_.view(),
+      walker_scalars_.view(),
+      reduction_scratch_.data()
     };
+  }
+
+  [[nodiscard]]
+  View view(std::size_t walker = 0uz) noexcept {
+    return this->batch_view().view(walker);
   }
 
   void accept_move(
