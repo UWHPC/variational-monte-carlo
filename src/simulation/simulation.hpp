@@ -195,7 +195,7 @@ public:
   void measure_walkers();
 
 private:
-  void initialize_positions();
+  void initialize_walkers();
   void warmup();
   MeasurementSummary measure();
 };

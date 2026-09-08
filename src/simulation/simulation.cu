@@ -53,7 +53,7 @@ const std::array<std::vector<fp_t>, idx(Axis::NUM)>& Simulation::positions_snaps
   return positions_;
 }
 
-void Simulation::initialize_positions() {
+void Simulation::initialize_walkers() {
   constexpr auto max_attempts{100uz};
 
   kernel::simulation::initialize_positions(
@@ -237,7 +237,7 @@ Simulation::MeasurementSummary Simulation::measure() {
 }
 
 Simulation::MeasurementSummary Simulation::run() {
-  initialize_positions();
+  this->initialize_walkers();
 
   if (output_writer_) {
     output_writer_->write_init(InitData{

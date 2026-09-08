@@ -113,20 +113,32 @@ public:
 
   [[nodiscard]] bool jastrow_cache_valid(std::size_t walker = 0uz) const noexcept {
     assert(walker < deriv_.batch_count());
-    return jastrow_cache_valid_.data()[walker] != 0u;
+
+    auto value{std::uint8_t{}};
+    xpu::copy_n(&value, jastrow_cache_valid_.data() + walker, 1uz);
+    return value != 0u;
   }
   void set_jastrow_cache_valid(bool value, std::size_t walker = 0uz) noexcept {
     assert(walker < deriv_.batch_count());
-    jastrow_cache_valid_.data()[walker] = scast<std::uint8_t>(value);
+
+    xpu::fill_n(
+      jastrow_cache_valid_.data() + walker,
+      1uz,
+      scast<std::uint8_t>(value)
+    );
   }
 
   [[nodiscard]] std::size_t steps_since_refresh(std::size_t walker = 0uz) const noexcept {
     assert(walker < deriv_.batch_count());
-    return steps_since_refresh_.data()[walker];
+
+    auto value{0uz};
+    xpu::copy_n(&value, steps_since_refresh_.data() + walker, 1uz);
+    return value;
   }
   void set_steps_since_refresh(std::size_t value, std::size_t walker = 0uz) noexcept {
     assert(walker < deriv_.batch_count());
-    steps_since_refresh_.data()[walker] = value;
+
+    xpu::fill_n(steps_since_refresh_.data() + walker, 1uz, value);
   }
 
   void evaluate_derivatives(Particles::View particles, std::size_t walker = 0uz) noexcept;
