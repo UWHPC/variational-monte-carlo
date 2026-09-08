@@ -138,6 +138,21 @@ public:
     std::size_t walker = 0uz
   ) noexcept;
 
+  void initialize_matrices(
+    Particles::BatchView particles,
+    std::size_t num_threads = 1uz
+  ) {
+    this->slater_plane_wave().initialize_matrices(particles, num_threads);
+  }
+
+  fp_t evaluate_log_psi_from_matrix(
+    Particles::View particles,
+    std::size_t walker = 0uz
+  ) {
+    return this->slater_plane_wave().factorize(walker)
+      + this->jastrow_pade().value(particles);
+  }
+
   fp_t evaluate_log_psi(Particles::View particles, std::size_t walker = 0uz) {
     return this->slater_plane_wave().log_abs_det(particles, walker)
       + this->jastrow_pade().value(particles);

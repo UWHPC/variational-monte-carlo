@@ -61,20 +61,21 @@ void Simulation::initialize_positions() {
     config_.box_length
   );
 
+  wave_function_.initialize_matrices(
+    particles_.batch_view(),
+    config_.num_threads
+  );
+
   for (auto walker{0uz}; walker < particles_.walker_count(); ++walker) {
     const auto walker_particles{particles_.view(walker)};
     auto log_psi{
-      wave_function_.evaluate_log_psi(
+      wave_function_.evaluate_log_psi_from_matrix(
         walker_particles,
         walker
       )
     };
 
-    for (
-      auto attempt{1uz};
-      !std::isfinite(log_psi) && attempt < max_attempts;
-      ++attempt
-    ) {
+    for (auto attempt{1uz}; !std::isfinite(log_psi) && attempt < max_attempts; ++attempt) {
       kernel::simulation::initialize_positions(
         this->view(walker),
         config_.box_length
