@@ -255,6 +255,17 @@ void SlaterPlaneWave::add_derivatives(
   kernel::slater::add_derivatives(this->view(walker), particles);
 }
 
+void SlaterPlaneWave::initialize_matrices(
+  Particles::BatchView particles,
+  std::size_t num_threads
+) {
+  kernel::slater::initialize_matrices(
+    this->batch_view(),
+    particles,
+    num_threads
+  );
+}
+
 fp_t SlaterPlaneWave::log_abs_det(
   Particles::View particles,
   std::size_t walker

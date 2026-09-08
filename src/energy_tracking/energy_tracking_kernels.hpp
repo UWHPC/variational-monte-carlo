@@ -764,9 +764,7 @@ inline void initialize(
   }
 #else
   scast<void>(num_threads);
-  #if defined(_OPENMP)
-    #pragma omp parallel for num_threads(num_threads)
-  #endif
+  #pragma omp parallel for num_threads(num_threads)
   for (auto walker = 0uz; walker < walker_count; ++walker) {
     const auto state{states[walker]};
     auto scratch{0.0_fp};

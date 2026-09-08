@@ -237,6 +237,11 @@ public:
   fp_t log_abs_det(Particles::View particles, std::size_t walker = 0uz);
   fp_t factorize(std::size_t walker = 0uz);
 
+  void initialize_matrices(
+    Particles::BatchView particles,
+    std::size_t num_threads = 1uz
+  );
+
   fp_t* build_row(std::size_t particle, std::size_t walker = 0uz) noexcept;
 
   [[nodiscard]] fp_t determinant_ratio(

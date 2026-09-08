@@ -48,6 +48,28 @@ inline void build_row(
 }
 
 CUDA_CALLABLE
+inline void initialize_matrix(
+  std::size_t orbital,
+  std::size_t particle,
+  SlaterPlaneWave::View slater
+) {
+  const auto offset{particle * slater.matrix_row_stride};
+
+  build_row(
+    orbital,
+    particle,
+    slater.trig_row_stride,
+    slater.sin_cache,
+    slater.cos_cache,
+    slater.orbital_k_index,
+    slater.orbital_type,
+    slater.determinant + offset
+  );
+
+  slater.lower_upper[offset + orbital] = slater.determinant[offset + orbital];
+}
+
+CUDA_CALLABLE
 inline void compute_log_abs_det(
   std::size_t i, std::size_t matrix_row_stride,
   const fp_t* RESTRICT lower_upper,
@@ -266,6 +288,49 @@ namespace slater {
 namespace {
 
 #if defined(XPU_CUDA)
+constexpr auto initialization_columns{32uz};
+constexpr auto initialization_rows{8uz};
+
+__global__
+void cudaInitializeTrigCache(
+  SlaterPlaneWave::BatchView slaters,
+  Particles::BatchView particles
+) {
+  const auto [k_index, particle, walker]{xpu::global_index<3>()};
+
+  if (
+    k_index >= slaters.num_unique_k ||
+    particle >= slaters.num_orbitals ||
+    walker >= slaters.walker_count()
+  ) { return; }
+
+  stencil::slater::update_trig_cache(
+    k_index,
+    particle,
+    slaters.view(walker),
+    particles.view(walker)
+  );
+}
+
+__global__
+void cudaInitializeMatrices(
+  SlaterPlaneWave::BatchView slaters
+) {
+  const auto [orbital, particle, walker]{xpu::global_index<3>()};
+
+  if (
+    orbital >= slaters.num_orbitals ||
+    particle >= slaters.num_orbitals ||
+    walker >= slaters.walker_count()
+  ) { return; }
+
+  stencil::slater::initialize_matrix(
+    orbital,
+    particle,
+    slaters.view(walker)
+  );
+}
+
 __global__
 void cudaUpdateTrigRow(
   std::size_t num_unique_k,
@@ -441,6 +506,71 @@ void kComputeSK(
 #endif
 
 } // namespace
+
+inline void initialize_matrices(
+  SlaterPlaneWave::BatchView slaters,
+  Particles::BatchView particles,
+  [[maybe_unused]] std::size_t num_threads
+) {
+  const auto walker_count{slaters.walker_count()};
+  if (walker_count == 0uz || slaters.num_orbitals == 0uz) { return; }
+
+#if defined(XPU_CUDA)
+  constexpr dim3 initializeTrigCacheThreads{
+    scast<unsigned int>(initialization_columns),
+    scast<unsigned int>(initialization_rows),
+    1u
+  };
+  const dim3 initializeTrigCacheBlocks{
+    xpu::block_per_dim(slaters.num_unique_k, initializeTrigCacheThreads.x),
+    xpu::block_per_dim(slaters.num_orbitals, initializeTrigCacheThreads.y),
+    scast<unsigned int>(walker_count)
+  };
+
+  cudaInitializeTrigCache<<<
+    initializeTrigCacheBlocks, initializeTrigCacheThreads
+  >>>(slaters, particles);
+  xpu::cu_check(cudaGetLastError());
+
+  constexpr dim3 initializeMatricesThreads{
+    scast<unsigned int>(initialization_columns),
+    scast<unsigned int>(initialization_rows),
+    1u
+  };
+  const dim3 initializeMatricesBlocks{
+    xpu::block_per_dim(slaters.num_orbitals, initializeMatricesThreads.x),
+    xpu::block_per_dim(slaters.num_orbitals, initializeMatricesThreads.y),
+    scast<unsigned int>(walker_count)
+  };
+
+  cudaInitializeMatrices<<<
+    initializeMatricesBlocks, initializeMatricesThreads
+  >>>(slaters);
+  xpu::cu_check(cudaGetLastError());
+#else
+  #pragma omp parallel for num_threads(num_threads)
+  for (auto walker = 0uz; walker < walker_count; ++walker) {
+    const auto slater{slaters.view(walker)};
+    const auto walker_particles{particles.view(walker)};
+
+    for (auto particle = 0uz; particle < slater.num_orbitals; ++particle) {
+      #pragma omp simd
+      for (auto k_index = 0uz; k_index < slater.num_unique_k; ++k_index) {
+        stencil::slater::update_trig_cache(
+          k_index, particle, slater, walker_particles
+        );
+      }
+
+      #pragma omp simd
+      for (auto orbital = 0uz; orbital < slater.num_orbitals; ++orbital) {
+        stencil::slater::initialize_matrix(
+          orbital, particle, slater
+        );
+      }
+    }
+  }
+#endif
+}
 
 inline void update_trig_cache(
   std::size_t num_unique_k,

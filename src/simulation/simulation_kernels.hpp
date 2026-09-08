@@ -1139,9 +1139,7 @@ inline Simulation::RunResult run_walkers(
   );
   xpu::cu_check(cudaGetLastError());
 #else
-  #if defined(_OPENMP)
-    #pragma omp parallel for num_threads(config.num_threads)
-  #endif
+  #pragma omp parallel for num_threads(config.num_threads)
   for (auto walker = 0uz; walker < walker_count; ++walker) {
     const auto simulation{simulations.view(walker)};
     Simulation::MetropolisScratch scratch{};
