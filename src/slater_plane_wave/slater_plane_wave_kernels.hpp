@@ -69,20 +69,17 @@ inline void initialize_matrix(
   slater.lower_upper[offset + orbital] = slater.determinant[offset + orbital];
 }
 
-CUDA_CALLABLE
-inline void compute_log_abs_det(
-  std::size_t i, std::size_t matrix_row_stride,
-  const fp_t* RESTRICT lower_upper,
-  fp_t* RESTRICT log_abs_det
+[[nodiscard]] CUDA_CALLABLE
+inline fp_t compute_log_abs_det(
+  std::size_t orbital,
+  std::size_t matrix_row_stride,
+  const fp_t* RESTRICT lower_upper
 ) {
-  const auto diagonal{lower_upper[i * matrix_row_stride + i]};
-  const auto contribution{xpu::log(xpu::abs(diagonal))};
+  const auto diagonal{
+    lower_upper[orbital * matrix_row_stride + orbital]
+  };
 
-#if defined(__CUDA_ARCH__)
-  atomicAdd(log_abs_det, contribution);
-#else
-  *log_abs_det += contribution;
-#endif
+  return xpu::log(xpu::abs(diagonal));
 }
 
 CUDA_CALLABLE
@@ -287,6 +284,20 @@ namespace slater {
 
 namespace {
 
+struct LogAbsDetContribution {
+  const fp_t* lower_upper{};
+  std::size_t matrix_row_stride{};
+
+  [[nodiscard]] CUDA_CALLABLE
+  fp_t operator()(const xpu::array<std::size_t, 1uz>& index) const {
+    return stencil::slater::compute_log_abs_det(
+      index[0uz],
+      matrix_row_stride,
+      lower_upper
+    );
+  }
+};
+
 #if defined(XPU_CUDA)
 constexpr auto initialization_columns{32uz};
 constexpr auto initialization_rows{8uz};
@@ -408,23 +419,6 @@ void cudaBuildDeterminant(
     sin_cache, cos_cache,
     orbital_k_index, orbital_type,
     &determinant[j * matrix_row_stride]
-  );
-}
-
-__global__
-void cudaComputeLogAbsDet(
-  std::size_t num_orbitals,
-  std::size_t matrix_row_stride,
-  const fp_t* RESTRICT lower_upper,
-  fp_t* RESTRICT log_abs_det
-) {
-  const auto [i]{xpu::global_index<1>()};
-  if (i >= num_orbitals) { return; }
-
-  stencil::slater::compute_log_abs_det(
-    i, matrix_row_stride,
-    lower_upper,
-    log_abs_det
   );
 }
 
@@ -721,42 +715,60 @@ inline void build_determinant(
 #endif
 }
 
-inline fp_t compute_log_abs_det(
+[[nodiscard]]
+inline std::size_t log_abs_det_scratch_bytes(
   std::size_t num_orbitals,
-  std::size_t matrix_row_stride,
-  const fp_t* RESTRICT lower_upper,
-  fp_t* RESTRICT log_abs_det_scratch
+  std::size_t matrix_row_stride
+) {
+  const xpu::range<1uz> range{
+    {0uz},
+    {num_orbitals},
+    {1uz}
+  };
+  const LogAbsDetContribution contribution{
+    nullptr,
+    matrix_row_stride
+  };
+
+  return xpu::parallel_reduce_sum_bytes<fp_t>(range, contribution);
+}
+
+inline fp_t compute_log_abs_det(
+  SlaterPlaneWave::View slater,
+  [[maybe_unused]] void* scratch,
+  [[maybe_unused]] std::size_t scratch_bytes
 ) {
 #if defined(XPU_CUDA)
-  xpu::zero_n(log_abs_det_scratch, 1uz);
-
-  dim3 computeLogAbsDetThreads{256u};
-  dim3 computeLogAbsDetBlocks{
-    xpu::block_per_dim(num_orbitals, computeLogAbsDetThreads.x)
+  const xpu::range<1uz> range{
+    {0uz},
+    {slater.num_orbitals},
+    {1uz}
   };
-  cudaComputeLogAbsDet<<<
-    computeLogAbsDetBlocks, computeLogAbsDetThreads
-  >>>(
-    num_orbitals, matrix_row_stride,
-    lower_upper,
-    log_abs_det_scratch
+  const LogAbsDetContribution contribution{
+    slater.lower_upper,
+    slater.matrix_row_stride
+  };
+
+  xpu::parallel_reduce_sum(
+    range,
+    slater.reduction_scratch,
+    contribution,
+    scratch,
+    scratch_bytes
   );
-  xpu::cu_check(cudaGetLastError());
 
   auto log_abs_det{0.0_fp};
-  xpu::copy_n(&log_abs_det, log_abs_det_scratch, 1uz);
+  xpu::copy_n(&log_abs_det, slater.reduction_scratch, 1uz);
   return log_abs_det;
 #else
-  scast<void>(log_abs_det_scratch);
-
   auto log_abs_det{0.0_fp};
 
   #pragma omp simd reduction(+ : log_abs_det)
-  for (auto i = 0uz; i < num_orbitals; ++i) {
-    stencil::slater::compute_log_abs_det(
-      i, matrix_row_stride,
-      lower_upper,
-      &log_abs_det
+  for (auto orbital = 0uz; orbital < slater.num_orbitals; ++orbital) {
+    log_abs_det += stencil::slater::compute_log_abs_det(
+      orbital,
+      slater.matrix_row_stride,
+      slater.lower_upper
     );
   }
 
@@ -955,15 +967,6 @@ inline void build_determinant(SlaterPlaneWave::View slater) {
     slater.orbital_k_index,
     slater.orbital_type,
     slater.determinant
-  );
-}
-
-inline fp_t compute_log_abs_det(SlaterPlaneWave::View slater) {
-  return compute_log_abs_det(
-    slater.num_orbitals,
-    slater.matrix_row_stride,
-    slater.lower_upper,
-    slater.reduction_scratch
   );
 }
 
