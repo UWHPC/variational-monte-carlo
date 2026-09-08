@@ -141,10 +141,15 @@ SlaterPlaneWave::SlaterPlaneWave(const Particles& particles, fp_t box_lengthL)
   , trig_scratch_{particles.walker_count(), 0uz}
   , matrices_{particles.walker_count(), matrix_row_stride_ * particles.count()}
   , reduction_scratch_{particles.walker_count()}
-  , log_abs_det_scratch_{
-      kernel::slater::log_abs_det_scratch_bytes(
-        particles.count(),
-        matrix_row_stride_
+  , sum_scratch_{
+      xpu::max(
+        kernel::slater::log_abs_det_scratch_bytes(
+          particles.count(),
+          matrix_row_stride_
+        ),
+        kernel::slater::determinant_ratio_scratch_bytes(
+          particles.count()
+        )
       )
     }
   , lu_factorization_{particles.count(), matrix_row_stride_}
@@ -250,7 +255,11 @@ fp_t SlaterPlaneWave::determinant_ratio(
   std::size_t walker
 ) noexcept {
   return kernel::slater::determinant_ratio(
-    this->view(walker), particle, new_row
+    this->view(walker),
+    particle,
+    new_row,
+    sum_scratch_.data(),
+    sum_scratch_.count()
   );
 }
 
@@ -303,8 +312,8 @@ fp_t SlaterPlaneWave::factorize(std::size_t walker) {
   const auto log_abs_det{
     kernel::slater::compute_log_abs_det(
       slater,
-      log_abs_det_scratch_.data(),
-      log_abs_det_scratch_.count()
+      sum_scratch_.data(),
+      sum_scratch_.count()
     )
   };
   if (!std::isfinite(log_abs_det)) {

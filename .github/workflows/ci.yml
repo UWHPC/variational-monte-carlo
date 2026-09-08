@@ -59,52 +59,6 @@ jobs:
           path: build-test-cpu/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
 
-  cpu-validation:
-    name: CPU validation (${{ matrix.configuration }})
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - configuration: fp64
-            arguments: ""
-          - configuration: fp32
-            arguments: --fp32
-          - configuration: fp64-fast-math
-            arguments: --ffast-math
-          - configuration: fp32-fast-math
-            arguments: --fp32 --ffast-math
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes software-properties-common
-          sudo add-apt-repository --yes ppa:ubuntu-toolchain-r/test
-          sudo apt-get update
-          sudo apt-get install --yes g++-15 liblapacke-dev libopenblas-dev ninja-build
-
-      - name: Cache fetched dependencies
-        uses: actions/cache@v4
-        with:
-          path: build-validation-cpu/_deps
-          key: ${{ runner.os }}-cpu-validation-${{ matrix.configuration }}-${{ hashFiles('CMakeLists.txt') }}
-
-      - name: Build and run scientific validation
-        run: ./scripts/validate.sh --cpu ${{ matrix.arguments }}
-
-      - name: Upload validation failure log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cpu-validation-${{ matrix.configuration }}-failure-log
-          path: build-validation-cpu/Testing/Temporary/LastTest.log
-          if-no-files-found: ignore
-
   cuda-build:
     name: CUDA compile-only
     runs-on: ubuntu-24.04

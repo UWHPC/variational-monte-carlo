@@ -82,22 +82,36 @@ inline fp_t compute_log_abs_det(
   return xpu::log(xpu::abs(diagonal));
 }
 
+[[nodiscard]] CUDA_CALLABLE
+inline fp_t determinant_ratio_contribution(
+  std::size_t orbital,
+  const fp_t* RESTRICT new_row,
+  const fp_t* RESTRICT inverse_row
+) {
+  return new_row[orbital] * inverse_row[orbital];
+}
+
 CUDA_CALLABLE
 inline void determinant_ratio(
-  std::size_t i, std::size_t particle,
+  std::size_t orbital,
+  std::size_t particle,
   std::size_t matrix_row_stride,
   const fp_t* RESTRICT new_row,
   const fp_t* RESTRICT inv_det,
   fp_t* RESTRICT ratio
 ) {
-  const auto product{
-    new_row[i] * inv_det[particle * matrix_row_stride + i]
+  const auto contribution{
+    determinant_ratio_contribution(
+      orbital,
+      new_row,
+      inv_det + particle * matrix_row_stride
+    )
   };
 
 #if defined(__CUDA_ARCH__)
-  atomicAdd(ratio, product);
+  atomicAdd(ratio, contribution);
 #else
-  *ratio += product;
+  *ratio += contribution;
 #endif
 }
 
@@ -284,6 +298,20 @@ namespace slater {
 
 namespace {
 
+struct DeterminantRatioContribution {
+  const fp_t* new_row{};
+  const fp_t* inverse_row{};
+
+  [[nodiscard]] CUDA_CALLABLE
+  fp_t operator()(const xpu::array<std::size_t, 1uz>& index) const {
+    return stencil::slater::determinant_ratio_contribution(
+      index[0uz],
+      new_row,
+      inverse_row
+    );
+  }
+};
+
 struct LogAbsDetContribution {
   const fp_t* lower_upper{};
   std::size_t matrix_row_stride{};
@@ -419,24 +447,6 @@ void cudaBuildDeterminant(
     sin_cache, cos_cache,
     orbital_k_index, orbital_type,
     &determinant[j * matrix_row_stride]
-  );
-}
-
-__global__
-void cudaDeterminantRatio(
-  std::size_t num_orbitals, std::size_t particle,
-  std::size_t matrix_row_stride,
-  const fp_t* RESTRICT new_row,
-  const fp_t* RESTRICT inv_det,
-  fp_t* RESTRICT ratio
-) {
-  const auto [i]{xpu::global_index<1>()};
-  if (i >= num_orbitals) { return; }
-
-  stencil::slater::determinant_ratio(
-    i, particle, matrix_row_stride,
-    new_row, inv_det,
-    ratio
   );
 }
 
@@ -776,40 +786,62 @@ inline fp_t compute_log_abs_det(
 #endif
 }
 
-inline fp_t determinant_ratio(
-  std::size_t num_orbitals, std::size_t particle,
-  std::size_t matrix_row_stride,
-  const fp_t* RESTRICT new_row,
-  const fp_t* RESTRICT inv_det
+[[nodiscard]]
+inline std::size_t determinant_ratio_scratch_bytes(
+  std::size_t num_orbitals
 ) {
-#if defined(XPU_CUDA)
-  xpu::buffer<fp_t> ratio{1uz};
-
-  dim3 determinantRatioThreads{256u};
-  dim3 determinantRatioBlocks{
-    xpu::block_per_dim(num_orbitals, determinantRatioThreads.x)
+  const xpu::range<1uz> range{
+    {0uz},
+    {num_orbitals},
+    {1uz}
   };
-  cudaDeterminantRatio<<<
-    determinantRatioBlocks, determinantRatioThreads
-  >>>(
-    num_orbitals, particle, matrix_row_stride,
-    new_row, inv_det,
-    ratio.data()
-  );
-  xpu::cu_check(cudaGetLastError());
+  const DeterminantRatioContribution contribution{};
 
-  auto ratio_host{0.0_fp};
-  xpu::copy_n(&ratio_host, ratio.data(), 1uz);
-  return ratio_host;
+  return xpu::parallel_reduce_sum_bytes<fp_t>(range, contribution);
+}
+
+inline fp_t determinant_ratio(
+  SlaterPlaneWave::View slater,
+  std::size_t particle,
+  const fp_t* new_row,
+  [[maybe_unused]] void* scratch,
+  [[maybe_unused]] std::size_t scratch_bytes
+) {
+  const auto inverse_row{
+    slater.inv_determinant + particle * slater.matrix_row_stride
+  };
+
+#if defined(XPU_CUDA)
+  const xpu::range<1uz> range{
+    {0uz},
+    {slater.num_orbitals},
+    {1uz}
+  };
+  const DeterminantRatioContribution contribution{
+    new_row,
+    inverse_row
+  };
+
+  xpu::parallel_reduce_sum(
+    range,
+    slater.reduction_scratch,
+    contribution,
+    scratch,
+    scratch_bytes
+  );
+
+  auto ratio{0.0_fp};
+  xpu::copy_n(&ratio, slater.reduction_scratch, 1uz);
+  return ratio;
 #else
   auto ratio{0.0_fp};
 
   #pragma omp simd reduction(+ : ratio)
-  for (auto i = 0uz; i < num_orbitals; ++i) {
-    stencil::slater::determinant_ratio(
-      i, particle, matrix_row_stride,
-      new_row, inv_det,
-      &ratio
+  for (auto orbital = 0uz; orbital < slater.num_orbitals; ++orbital) {
+    ratio += stencil::slater::determinant_ratio_contribution(
+      orbital,
+      new_row,
+      inverse_row
     );
   }
 
@@ -983,20 +1015,6 @@ inline void build_row(
     slater.orbital_k_index,
     slater.orbital_type,
     slater.new_row
-  );
-}
-
-inline fp_t determinant_ratio(
-  SlaterPlaneWave::View slater,
-  std::size_t particle,
-  const fp_t* new_row
-) {
-  return determinant_ratio(
-    slater.num_orbitals,
-    particle,
-    slater.matrix_row_stride,
-    new_row,
-    slater.inv_determinant
   );
 }
 

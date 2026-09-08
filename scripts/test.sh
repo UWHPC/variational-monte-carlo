@@ -73,6 +73,7 @@ run_pipeline() {
     -DFP_64="$FP64_FLAG"
     -DVMC_FAST_MATH="$FAST_MATH_FLAG"
     -DBUILD_TESTING=ON
+    -DVMC_BUILD_VALIDATION=OFF
     -DCMAKE_BUILD_TYPE=Debug
   )
 

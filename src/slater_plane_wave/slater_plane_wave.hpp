@@ -56,7 +56,7 @@ private:
   xpu::soa_batch<fp_t, NUM_MATRIX> matrices_;
 
   xpu::buffer<fp_t> reduction_scratch_;
-  xpu::buffer<std::byte> log_abs_det_scratch_;
+  xpu::buffer<std::byte> sum_scratch_;
   xpu::linalg::lu_factorization<fp_t> lu_factorization_;
 
 public:

@@ -44,6 +44,10 @@ but not run. If no CUDA compiler is available, the default invocation skips CUDA
 
 Use `./scripts/test.sh --cpu` or `./scripts/test.sh --cuda` to select one backend.
 The script also accepts `--fp32` and `--ffast-math`.
+Behavior tests run on every push and pull request in all four CPU precision and
+fast-math configurations. CUDA tests and validation targets are compile-checked;
+CI does not run them on a GPU. The test script excludes scientific validation,
+including when reusing a build directory that previously enabled it.
 
 ## Run Scientific Validation
 
@@ -52,6 +56,12 @@ Run analytical, independent numerical-reference, and literature validations:
 `./scripts/validate.sh`
 
 The validation script accepts `--cpu`, `--cuda`, `--fp32`, and `--ffast-math`.
+It builds in Release. The separate **Scientific validation** workflow runs the
+four CPU configurations nightly at 06:00 UTC and can also be started manually
+with a branch, tag, or commit in its `ref` input. Run it against the proposed
+commit before merging numerical or physics changes. This is a review requirement;
+the workflow does not configure branch-protection rules.
+
 It checks free-gas kinetic energy and zero variance, the same-spin cusp,
 periodicity, Ewald energy, incremental Slater updates, and the fully polarized
 electron-gas energy against the Perdew-Zunger parametrization of Ceperley-Alder
