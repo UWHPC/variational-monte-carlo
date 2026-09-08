@@ -106,10 +106,9 @@ inline void update_real_energy(
 }
 
 CUDA_CALLABLE
-inline void kinetic_energy(
+inline fp_t kinetic_energy_contribution(
   std::size_t i,
-  xpu::soa_view<fp_t, idx(Derivatives::NUM)> derivatives,
-  fp_t* RESTRICT kinetic_sum
+  xpu::soa_view<fp_t, idx(Derivatives::NUM)> derivatives
 ) noexcept {
   const auto gradient_x{derivatives[idx(Derivatives::GRAD_X)][i]};
   const auto gradient_y{derivatives[idx(Derivatives::GRAD_Y)][i]};
@@ -119,9 +118,17 @@ inline void kinetic_energy(
     gradient_y * gradient_y +
     gradient_z * gradient_z
   };
-  const auto contribution{
-    derivatives[idx(Derivatives::LAP)][i] + gradient_squared
-  };
+
+  return derivatives[idx(Derivatives::LAP)][i] + gradient_squared;
+}
+
+CUDA_CALLABLE
+inline void kinetic_energy(
+  std::size_t i,
+  xpu::soa_view<fp_t, idx(Derivatives::NUM)> derivatives,
+  fp_t* RESTRICT kinetic_sum
+) noexcept {
+  const auto contribution{kinetic_energy_contribution(i, derivatives)};
 
 #if defined(__CUDA_ARCH__)
   atomicAdd(kinetic_sum, contribution);
@@ -416,6 +423,20 @@ namespace energy {
 
 namespace {
 
+struct KineticEnergyContribution {
+  xpu::soa_view<fp_t, idx(Derivatives::NUM)> derivatives{
+    nullptr, 0uz
+  };
+
+  [[nodiscard]] CUDA_CALLABLE
+  fp_t operator()(const xpu::array<std::size_t, 1uz>& index) const {
+    return stencil::energy::kinetic_energy_contribution(
+      index[0uz],
+      derivatives
+    );
+  }
+};
+
 #if defined(XPU_CUDA)
 __global__
 void cudaUpdateRealEnergy(
@@ -439,21 +460,6 @@ void cudaUpdateRealEnergy(
     L, half_L, alpha,
     old_pos, new_pos, pos,
     delta
-  );
-}
-
-__global__
-void cudaKineticEnergy(
-  xpu::soa_view<fp_t, idx(Derivatives::NUM)> derivatives,
-  fp_t* RESTRICT kinetic_sum
-) {
-  const auto [i]{xpu::global_index<1>()};
-  if (i >= derivatives.count()) { return; }
-
-  stencil::energy::kinetic_energy(
-    i,
-    derivatives,
-    kinetic_sum
   );
 }
 
@@ -532,45 +538,45 @@ inline fp_t update_real_energy(
 #endif
 }
 
-inline fp_t kinetic_energy(
-  xpu::soa_view<fp_t, idx(Derivatives::NUM)> derivatives,
-  fp_t* RESTRICT kinetic_sum_scratch
-) noexcept {
-#if defined(XPU_CUDA)
-  xpu::zero_n(kinetic_sum_scratch, 1uz);
-
-  dim3 kineticEnergyThreads{256u};
-  dim3 kineticEnergyBlocks{
-    xpu::block_per_dim(derivatives.count(), kineticEnergyThreads.x)
+inline std::size_t kinetic_energy_scratch_bytes(
+  std::size_t num_particles
+) {
+  const xpu::range<1uz> range{
+    {0uz},
+    {num_particles},
+    {1uz}
+  };
+  const KineticEnergyContribution contribution{
+    xpu::soa_view<fp_t, idx(Derivatives::NUM)>{nullptr, num_particles}
   };
 
-  cudaKineticEnergy<<<
-    kineticEnergyBlocks, kineticEnergyThreads
-  >>>(
-    derivatives,
-    kinetic_sum_scratch
+  return xpu::parallel_reduce_sum_bytes<fp_t>(range, contribution);
+}
+
+inline fp_t kinetic_energy(
+  xpu::soa_view<fp_t, idx(Derivatives::NUM)> derivatives,
+  fp_t* RESTRICT kinetic_sum_scratch,
+  void* scratch,
+  std::size_t scratch_bytes
+) noexcept {
+  const xpu::range<1uz> range{
+    {0uz},
+    {derivatives.count()},
+    {1uz}
+  };
+  const KineticEnergyContribution contribution{derivatives};
+
+  xpu::parallel_reduce_sum(
+    range,
+    kinetic_sum_scratch,
+    contribution,
+    scratch,
+    scratch_bytes
   );
-  xpu::cu_check(cudaGetLastError());
 
   auto kinetic_sum{0.0_fp};
   xpu::copy_n(&kinetic_sum, kinetic_sum_scratch, 1uz);
   return -0.5_fp * kinetic_sum;
-#else
-  scast<void>(kinetic_sum_scratch);
-
-  auto kinetic_sum{0.0_fp};
-
-  #pragma omp simd reduction(+ : kinetic_sum)
-  for (auto i = 0uz; i < derivatives.count(); ++i) {
-    stencil::energy::kinetic_energy(
-      i,
-      derivatives,
-      &kinetic_sum
-    );
-  }
-
-  return -0.5_fp * kinetic_sum;
-#endif
 }
 
 inline void update_structure_factors(
@@ -628,11 +634,15 @@ inline fp_t update_real_energy(
 
 inline fp_t kinetic_energy(
   EnergyTracker::View energy,
-  Particles::View particles
+  Particles::View particles,
+  void* scratch,
+  std::size_t scratch_bytes
 ) noexcept {
   return kinetic_energy(
     particles.derivatives,
-    energy.reduction_scratch
+    energy.reduction_scratch,
+    scratch,
+    scratch_bytes
   );
 }
 

@@ -42,6 +42,7 @@ private:
   xpu::soa_batch<fp_t, idx(WalkerArray::NUM_ARRAYS)> walker_data_;
   xpu::soa<fp_t, idx(WalkerScalar::NUM_ARRAYS)> walker_scalars_;
   mutable xpu::buffer<fp_t> reduction_scratch_;
+  xpu::buffer<std::byte> sum_scratch_;
 
 public:
   struct View {

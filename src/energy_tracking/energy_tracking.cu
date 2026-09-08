@@ -23,6 +23,9 @@ EnergyTracker::EnergyTracker(
 , walker_data_{num_walkers, 0uz}
 , walker_scalars_{num_walkers}
 , reduction_scratch_{num_walkers}
+, sum_scratch_{
+    kernel::energy::kinetic_energy_scratch_bytes(num_particles)
+  }
 , reciprocal_partials_{0uz}
 , real_partials_{0uz}
 , reciprocal_partial_count_{}
@@ -187,7 +190,9 @@ fp_t EnergyTracker::kinetic_energy(
 ) noexcept {
   return kernel::energy::kinetic_energy(
     this->view(walker),
-    particles
+    particles,
+    sum_scratch_.data(),
+    sum_scratch_.count()
   );
 }
 

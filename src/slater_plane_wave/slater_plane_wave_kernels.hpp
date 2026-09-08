@@ -745,10 +745,9 @@ inline std::size_t log_abs_det_scratch_bytes(
 
 inline fp_t compute_log_abs_det(
   SlaterPlaneWave::View slater,
-  [[maybe_unused]] void* scratch,
-  [[maybe_unused]] std::size_t scratch_bytes
+  void* scratch,
+  std::size_t scratch_bytes
 ) {
-#if defined(XPU_CUDA)
   const xpu::range<1uz> range{
     {0uz},
     {slater.num_orbitals},
@@ -770,20 +769,6 @@ inline fp_t compute_log_abs_det(
   auto log_abs_det{0.0_fp};
   xpu::copy_n(&log_abs_det, slater.reduction_scratch, 1uz);
   return log_abs_det;
-#else
-  auto log_abs_det{0.0_fp};
-
-  #pragma omp simd reduction(+ : log_abs_det)
-  for (auto orbital = 0uz; orbital < slater.num_orbitals; ++orbital) {
-    log_abs_det += stencil::slater::compute_log_abs_det(
-      orbital,
-      slater.matrix_row_stride,
-      slater.lower_upper
-    );
-  }
-
-  return log_abs_det;
-#endif
 }
 
 [[nodiscard]]
@@ -804,14 +789,9 @@ inline fp_t determinant_ratio(
   SlaterPlaneWave::View slater,
   std::size_t particle,
   const fp_t* new_row,
-  [[maybe_unused]] void* scratch,
-  [[maybe_unused]] std::size_t scratch_bytes
+  void* scratch,
+  std::size_t scratch_bytes
 ) {
-  const auto inverse_row{
-    slater.inv_determinant + particle * slater.matrix_row_stride
-  };
-
-#if defined(XPU_CUDA)
   const xpu::range<1uz> range{
     {0uz},
     {slater.num_orbitals},
@@ -819,7 +799,7 @@ inline fp_t determinant_ratio(
   };
   const DeterminantRatioContribution contribution{
     new_row,
-    inverse_row
+    slater.inv_determinant + particle * slater.matrix_row_stride
   };
 
   xpu::parallel_reduce_sum(
@@ -833,20 +813,6 @@ inline fp_t determinant_ratio(
   auto ratio{0.0_fp};
   xpu::copy_n(&ratio, slater.reduction_scratch, 1uz);
   return ratio;
-#else
-  auto ratio{0.0_fp};
-
-  #pragma omp simd reduction(+ : ratio)
-  for (auto orbital = 0uz; orbital < slater.num_orbitals; ++orbital) {
-    ratio += stencil::slater::determinant_ratio_contribution(
-      orbital,
-      new_row,
-      inverse_row
-    );
-  }
-
-  return ratio;
-#endif
 }
 
 inline void add_derivatives(

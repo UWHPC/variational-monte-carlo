@@ -29,29 +29,68 @@ Expose the needed constants and numeric limits through xpu-owned headers and nam
 
 Energy, Slater, and Jastrow stencils currently select CUDA `atomicAdd` versus ordinary CPU addition with `__CUDA_ARCH__` guards.
 
-Consider an xpu accumulation primitive with explicit concurrency semantics. An ordinary CPU addition is sufficient only when one CPU task owns the accumulator; it is not a general substitute for an atomic operation. VMC keeps the physical contribution calculations, and xpu supplies any reusable synchronization primitive.
+The inspected xpu checkout already provides `xpu::atomic_add`. Audit its concurrency semantics when migrating remaining guards. An ordinary CPU addition is sufficient only when one CPU task owns the accumulator; it is not a general substitute for an atomic operation. Prefer cooperative reduction where many threads contribute to one sum. VMC keeps the physical contribution calculations.
 
 ## Needed for upcoming initialization work
 
 ### Lightweight batched SoA views
 
-The inspected xpu `soa_batch` owns storage and exposes `view(batch)` for one batch. It does not expose a lightweight view of the complete batch collection.
-
-Add a non-owning batch view containing base pointers, element/batch counts, and array/batch strides. It should derive per-batch views on either backend, preserve const-correctness and padding, and support exposing subsets of arrays.
-
-VMC can then compose its own particle, energy, and Slater batch views without passing owning objects or uploading arrays of per-walker descriptors. Generic SoA addressing belongs in xpu; the component composition belongs in VMC.
+Implemented in the inspected xpu checkout as `soa_batch_view` and already consumed by VMC's composed batch views. Generic SoA addressing belongs in xpu; the component composition belongs in VMC. This is no longer an outstanding addition.
 
 ### Whole-buffer and segmented reductions
 
-The immediate migration is the cooperative block reduction above. A later `xpu::parallel_reduce` can own multi-block scheduling and partial storage for whole-buffer reductions. Independent segments would also support one result per walker.
+`xpu::parallel_reduce_sum` now exists and VMC uses it for host-dispatched Slater reductions on both backends. It is distinct from a block reduction callable inside a resident kernel. Independent segments remain a candidate for producing one result per walker without separate host dispatches.
 
 Keep outputs backend-resident, provide explicit host retrieval separately, and make scratch lifetime and stream ordering clear. Energy prefactors and other physical formulas remain in VMC stencils.
+
+### Reduction workspace without a raw-byte contract
+
+Keep the operation a function. Proposed consumer API:
+
+```cpp
+xpu::reduction_workspace<fp_t> workspace;
+
+xpu::prepare_reduce_sum(workspace, range, contribution);
+xpu::parallel_reduce_sum(range, result, contribution, workspace);
+```
+
+- Preparation queries and allocates backend scratch once, using the actual contribution type; it must not read input elements or retain input pointers.
+- Execution reuses storage without allocating. Require explicit preparation again when the workload exceeds the prepared contract, and report incompatible workspace use clearly.
+- xpu owns byte counts, alignment, capacity checks, and backend details. CPU workspace can have no scratch allocation. The raw pointer/byte API can remain underneath for advanced callers.
+- Specify stream/device compatibility and prohibit overlapping reuse of one workspace unless explicitly supported. Independent concurrent operations need independent workspaces.
+- VMC owners retain the workspace; kernel wrappers receive it. No per-call allocation or workspace metadata in the public physics API.
+
+### Block reduction inside resident kernels
+
+Provide a device-callable `xpu::block_reduce_sum` with scalar CPU semantics. Each thread first accumulates its assigned elements locally, the block reduces those contributions, and one designated thread writes the result.
+
+This can replace per-particle kinetic-energy atomics in `evaluate_local_energy` and other resident sums after their dependencies are audited. Host-dispatched `parallel_reduce_sum` cannot perform this job inside an already-running walker kernel.
+
+- Encapsulate barriers and backend intrinsics in xpu; keep the numerical contribution stencil common to CPU and CUDA.
+- Hide raw scratch-byte bookkeeping behind typed block storage or an execution context. Specify storage lifetime, reuse synchronization, supported block widths, and which threads receive a valid result.
+- Require uniform participation by the block; inactive lanes contribute zero. On the scalar CPU path, return the thread-local contribution.
+- No dynamic allocation or implicit host launch. Preserve the caller's one-block-per-walker mapping for the sequential chain.
+- Test precision, partial input tiles, supported block sizes, and repeated storage reuse in xpu on real CUDA hardware.
+
+### CPU reduction execution policy
+
+Deferred for later tuning, but belongs in xpu. The inspected implementation enters an OpenMP parallel reduction for every nonempty range. The local perf audit found substantial overhead for repeated 485-element host-dispatched reductions, including with one OpenMP thread.
+
+Add a cheap serial/vectorizable path for small ranges and a measured threshold for parallel execution. Define thread-budget and nested-parallelism behavior so reductions do not oversubscribe surrounding walker work. Benchmark larger ranges and contribution costs before choosing a policy; those crossover measurements have not been performed. Keep VMC on the same reduction function for both backends.
+
+### Optional squared-norm math helper
+
+The inspected math header has `norm3d`, which includes a square root, but no squared-norm helper. A proposed `xpu::norm_squared3d(x, y, z)` could express `x*x + y*y + z*z` without that square root. This is an optional convenience, not a prerequisite or demonstrated performance improvement. Decide floating-point contraction semantics in xpu; VMC can retain the explicit expression meanwhile.
 
 ### Batched or asynchronous LU and inversion
 
 The current xpu LU interface is stateful and single-matrix. Keep host-dispatched GPU LU initially; do not add a custom VMC device LU.
 
-A future xpu interface should support multiple matrices, padded leading dimensions, independent backend status storage, and controlled stream/handle ownership. Avoid requiring a synchronous host status copy after every matrix when the caller can consume status on the backend.
+First prerequisite: factorization and inversion must accept backend-resident status output without requiring a synchronous host status copy. Specify status meanings, pivot lifetime, operation ordering, and handling of singular matrices. Preserve the existing synchronous convenience API. Distinguish asynchronous numerical status from host-visible library/launch failures.
+
+VMC can then keep per-walker LU status and log determinants on the backend, classify failed walkers there, and retrieve one aggregate failure status in the common initialization path. VMC owns failed-walker selection, deterministic RNG streams, selective regeneration, and the existing 100-attempt limit. This removes per-walker scalar synchronization without requiring batched LU immediately.
+
+Next addition: batched factorization and inversion with one status per matrix. Support multiple matrices, padded leading dimensions, batch strides or backend pointer arrays, backend pivot/output storage, and explicit stream/handle ownership. Define workspace sizing and reuse through an xpu-owned interface; avoid allocation during repeated execution. Define how invalid matrices are excluded from inversion and how callers submit only failed matrices for retries.
 
 Compare sequential cuSOLVER, bounded concurrent cuSOLVER calls, and vendor batched factorization/inversion on real hardware. Do not assume batched LU is fastest for 485-by-485 matrices. Walker retry selection and the retry limit remain VMC responsibilities.
 
