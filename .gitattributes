@@ -1,0 +1,8 @@
+# Everything here runs under WSL2/Linux (see README prerequisites), so
+# shell scripts and other executables must never be checked out with CRLF —
+# Git for Windows' default core.autocrlf=true will otherwise silently break
+# every "#!/usr/bin/env bash" shebang.
+*.sh text eol=lf
+*.py text eol=lf
+CMakeLists.txt text eol=lf
+config.cfg text eol=lf

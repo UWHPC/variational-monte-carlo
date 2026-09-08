@@ -50,10 +50,36 @@ Then visualize the result:
 
 `.venv/bin/python render.py --input output/vmc.bin`
 
+The viewer opens with four 3D tabs:
+
+- **Electron gas** — the live simulation, particles coloured by recent
+  motion (a decaying trail, since most particles are stationary in any
+  given sweep) with short motion trails
+- **Orbitals** — the actual plane-wave basis the Slater determinant uses,
+  rendered as 3D wavefronts (positive/negative lobes), on its own
+  scrubbable `orbital` timeline independent of simulation time
+- **Correlation hole** — pair separations `r_j - r_i` stacked at the
+  origin; the void at the centre is the exchange-correlation hole made
+  visible directly, rather than just a dip on a g(r) line
+- **Fermi sea** — the occupied k-points, coloured by shell
+
+alongside energy, acceptance, standard-error, and g(r) plots. The
+**sampling cloud** — every configuration the walkers visited, overlaid —
+is the honest picture of what the Monte Carlo is doing; a single frame is
+just `Num_Particles` dots. Its density scales with `Measure_Sweeps`, so a
+longer run gives a visibly thicker cloud.
+
 Script parameters:
 
 - `--input <PATH>` (default: `output/vmc.bin`)
 - `--stride <N>` render every Nth frame (default: `1`)
+- `--color-by <motion|density|energy|none>` per-particle colouring
+  (default: `motion`)
+- `--trail <N>` motion trail length, `0` disables (default: `12`)
+- `--no-cloud` skip the accumulated sampling and correlation clouds
+- `--cloud-points <N>` / `--cloud-alpha <0-255>` cloud size and opacity
+- `--orbitals <N>` plane-wave orbitals to sample, `0` disables (default: `16`)
+- `--orbital-cells <N>` grid resolution per axis for orbitals (default: `34`)
 
 ### Troubleshooting: blank viewer window on WSL2
 
