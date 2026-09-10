@@ -27,7 +27,9 @@ private:
     const Config& base_config,
     real_t b,
     std::size_t warmup_sweeps,
-    std::size_t measure_sweeps
+    std::size_t measure_sweeps,
+    std::size_t block_sweeps,
+    std::uint64_t seed
   );
   [[nodiscard]] static real_t compute_rs(const Config& cfg);
 };

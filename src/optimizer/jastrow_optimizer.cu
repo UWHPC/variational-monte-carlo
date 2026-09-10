@@ -1,6 +1,8 @@
-#include <xpu/xpu.hpp>
-#include "jastrow_optimizer.hpp"
 #include "../simulation/simulation.cuh"
+#include "jastrow_optimizer.hpp"
+#include <cstdint>
+#include <random>
+#include <xpu/xpu.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -35,11 +37,9 @@ JastrowOptimizer::Result JastrowOptimizer::optimize(const Config& base_config, b
 
   // Adapt scan statistics based on system size.
   const std::size_t scan_warmup{
-    std::max<std::size_t>(50U, 500U / std::max<std::size_t>(N / 7U, 1U))
-  };
+      std::max<std::size_t>(50U, 500U / std::max<std::size_t>(N / 7U, 1U))};
   const std::size_t scan_measure{
-    std::max<std::size_t>(50U, 500U / std::max<std::size_t>(N / 7U, 1U))
-  };
+      std::max<std::size_t>(50U, 500U / std::max<std::size_t>(N / 7U, 1U))};
 
   if (verbose) {
     std::cout << "[Optimizer] r_s=" << std::fixed << std::setprecision(2) << R_S << ", N=" << N
@@ -59,12 +59,15 @@ JastrowOptimizer::Result JastrowOptimizer::optimize(const Config& base_config, b
   std::vector<std::future<EvalResult>> futures;
   futures.reserve(grid_points);
 
+  std::mt19937_64 seed_generator(base_config.master_seed);
+
   for (std::size_t i = 0; i < grid_points; ++i) {
+    uint64_t seed = seed_generator();
     const real_t b{b_values[i]};
     const std::size_t warmup{scan_warmup};
     const std::size_t measure{scan_measure};
-    futures.push_back(std::async(std::launch::async, [&base_config, b, warmup, measure]() {
-      return evaluate(base_config, b, warmup, measure);
+    futures.push_back(std::async(std::launch::async, [&base_config, b, warmup, measure, seed]() {
+      return evaluate(base_config, b, warmup, 4096, 64, seed);
     }));
   }
 
@@ -141,24 +144,24 @@ JastrowOptimizer::Result JastrowOptimizer::optimize(const Config& base_config, b
   return Result{.optimal_b = best_b, .energy = best_energy, .standard_error = 0.0_r};
 }
 
-JastrowOptimizer::EvalResult JastrowOptimizer::evaluate(
-  const Config& base_config,
-  real_t b,
-  std::size_t warmup_sweeps,
-  std::size_t measure_sweeps
-) {
+JastrowOptimizer::EvalResult JastrowOptimizer::evaluate(const Config& base_config, real_t b,
+                                                        std::size_t warmup_sweeps,
+                                                        std::size_t measure_sweeps,
+                                                        std::size_t block_sweeps,
+                                                        std::uint64_t seed) {
+  // if (block_sweeps == 0) {}
   Config cfg{};
   cfg.num_particles = base_config.num_particles;
   cfg.box_length = base_config.box_length;
   cfg.jastrow_a = base_config.jastrow_a;
   cfg.jastrow_b = b;
-  cfg.master_seed = base_config.master_seed;
+  cfg.master_seed = seed;
   cfg.is_master_thread = false;
   cfg.num_threads = 1;
 
   cfg.warmup_sweeps = warmup_sweeps;
   cfg.measure_sweeps = measure_sweeps;
-  cfg.block_size = std::max<std::size_t>(50U, measure_sweeps / 5U);
+  cfg.block_size = block_sweeps * base_config.num_particles;
   cfg.warmup_steps = cfg.num_particles * warmup_sweeps;
   cfg.measure_steps = cfg.num_particles * measure_sweeps;
   cfg.step_size = base_config.box_length / 10.0_r;
@@ -167,8 +170,11 @@ JastrowOptimizer::EvalResult JastrowOptimizer::evaluate(
   const auto summary{sim.run()};
 
   return EvalResult{
-    .b = b,
-    .energy = summary.mean_energy,
-    .standard_error = summary.standard_error.value_or(0.0_r)
+      .b = b,
+      .energy = summary.mean_energy,
+      .standard_error =
+          summary.standard_error.has_value() && std::isfinite(summary.standard_error.value())
+              ? summary.standard_error.value()
+              : -1,
   };
 }
