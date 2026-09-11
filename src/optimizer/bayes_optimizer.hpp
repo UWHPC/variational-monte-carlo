@@ -5,6 +5,7 @@
 
 class GaussianProcess {
 public:
+  // Host LAPACK uses double precision independently of the simulation's real_t.
   struct Parameters {
     double length_scale{0.2};
     double signal_variance{1.0};
@@ -14,7 +15,7 @@ public:
 
   struct Prediction {
     double mean;
-    double variance; 
+    double variance;
   };
 
   GaussianProcess();

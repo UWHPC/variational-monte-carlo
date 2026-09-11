@@ -11,6 +11,20 @@
 extern "C" void dpotrf_(const char* uplo, const int* n, double* a, const int* lda, int* info,
                         std::size_t uplo_length);
 
+namespace {
+
+[[nodiscard]] double dot_product(const double* RESTRICT left, const double* RESTRICT right,
+                                 std::size_t count) noexcept {
+  double sum{};
+  #pragma omp simd reduction(+ : sum)
+  for (std::size_t i = 0; i < count; ++i) {
+    sum += left[i] * right[i];
+  }
+  return sum;
+}
+
+} // namespace
+
 GaussianProcess::GaussianProcess() : GaussianProcess(Parameters{}) {}
 
 GaussianProcess::GaussianProcess(Parameters parameters) : parameters_{parameters} {
@@ -23,7 +37,7 @@ GaussianProcess::GaussianProcess(Parameters parameters) : parameters_{parameters
 }
 
 double GaussianProcess::kernel(double left, double right) const {
-  const double r{std::abs(left - right) / parameters_.length_scale};
+  const double r{xpu::abs(left - right) / parameters_.length_scale};
   if (r > 350.0)
     return 0.0; // avoid underflow
   const double t{xpu::sqrt(5.0) * r};
@@ -68,6 +82,7 @@ void GaussianProcess::fit(std::span<const double> inputs, std::span<const double
   double jitter{std::max(parameters_.jitter * diagonal_scale, std::numeric_limits<double>::min())};
   bool factored{false};
   const int order{static_cast<int>(n)};
+  // Row-major L is column-major U for LAPACK; no transpose or copy is needed.
   constexpr char triangle{'U'};
   for (int attempt = 0; attempt < 8 && !factored; ++attempt) {
     lower = covariance;
@@ -91,16 +106,21 @@ void GaussianProcess::fit(std::span<const double> inputs, std::span<const double
   double quadratic{};
   double log_diagonal{};
   for (std::size_t i = 0; i < n; ++i) {
-    for (std::size_t j = 0; j < i; ++j)
-      alpha[i] -= lower[i * n + j] * alpha[j];
-    alpha[i] /= lower[i * n + i];
+    const double* row{lower.data() + i * n};
+    alpha[i] = (alpha[i] - dot_product(row, alpha.data(), i)) / row[i];
     quadratic += alpha[i] * alpha[i];
     log_diagonal += xpu::log(lower[i * n + i]);
   }
   for (std::size_t i = n; i-- > 0;) {
-    for (std::size_t j = i + 1; j < n; ++j)
-      alpha[i] -= lower[j * n + i] * alpha[j];
-    alpha[i] /= lower[i * n + i];
+    const double* RESTRICT row{lower.data() + i * n};
+    double* RESTRICT values{alpha.data()};
+    values[i] /= row[i];
+    const double solved{values[i]};
+    // Update a contiguous row instead of traversing a strided column of L.
+    #pragma omp simd
+    for (std::size_t j = 0; j < i; ++j) {
+      values[j] -= row[j] * solved;
+    }
   }
   const double likelihood{0.5 * quadratic + log_diagonal +
                           0.5 * static_cast<double>(n) * xpu::log(2.0 * std::numbers::pi)};
@@ -125,10 +145,8 @@ GaussianProcess::Prediction GaussianProcess::predict(double input, std::span<dou
   for (std::size_t i = 0; i < n; ++i) {
     const double covariance{kernel(inputs_[i], input)};
     mean += covariance * alpha_[i];
-    double value{covariance};
-    for (std::size_t j = 0; j < i; ++j)
-      value -= lower_[i * n + j] * work[j];
-    work[i] = value / lower_[i * n + i];
+    const double* row{lower_.data() + i * n};
+    work[i] = (covariance - dot_product(row, work.data(), i)) / row[i];
     reduction += work[i] * work[i];
   }
   const double variance{parameters_.signal_variance - reduction};
@@ -137,7 +155,7 @@ GaussianProcess::Prediction GaussianProcess::predict(double input, std::span<dou
   if (!std::isfinite(mean) || !std::isfinite(variance) || variance < -tolerance) {
     throw std::runtime_error("GaussianProcess: invalid posterior prediction");
   }
-  return {mean, std::max(0.0, variance)};
+  return Prediction{.mean = mean, .variance = std::max(0.0, variance)};
 }
 
 GaussianProcess::Prediction GaussianProcess::predict(double input) const {
