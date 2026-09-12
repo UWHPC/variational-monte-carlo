@@ -80,3 +80,6 @@ Testing/
 .cache/
 .claude
 .backboard
+
+# benchmarking (bayesian)
+benchmarks/
