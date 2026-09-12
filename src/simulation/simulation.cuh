@@ -57,6 +57,8 @@ private:
 public:
   struct MeasurementSummary {
     real_t mean_energy;
+    real_t mean_kinetic_energy;
+    real_t mean_potential_energy;
     std::optional<real_t> standard_error;
     real_t acceptance_rate;
   };

@@ -177,6 +177,8 @@ Simulation::MeasurementSummary Simulation::measure() {
   accepted_ = 0U;
 
   real_t running_energy_sum{};
+  real_t running_kinetic_sum{};
+  real_t running_potential_sum{};
   real_t final_mean_energy{};
   std::optional<real_t> final_standard_error{};
 
@@ -192,8 +194,12 @@ Simulation::MeasurementSummary Simulation::measure() {
       result.old_x, result.old_y, result.old_z
     );
 
-    const real_t E_local{energy_tracker.eval_total_energy(particles)};
+    const real_t kinetic{energy_tracker.kinetic_energy(particles)};
+    const real_t potential{energy_tracker.potential_energy()};
+    const real_t E_local{kinetic + potential};
     running_energy_sum += E_local;
+    running_kinetic_sum += kinetic;
+    running_potential_sum += potential;
     blocking_analysis.add(E_local);
 
     const real_t running_mean{running_energy_sum / static_cast<real_t>(i + 1U)};
@@ -242,6 +248,8 @@ Simulation::MeasurementSummary Simulation::measure() {
 
   return MeasurementSummary{
     .mean_energy = final_mean_energy,
+    .mean_kinetic_energy = running_kinetic_sum / static_cast<real_t>(measure_steps),
+    .mean_potential_energy = running_potential_sum / static_cast<real_t>(measure_steps),
     .standard_error = final_standard_error,
     .acceptance_rate = acceptance_rate()
   };

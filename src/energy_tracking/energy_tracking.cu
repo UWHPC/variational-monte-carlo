@@ -723,7 +723,7 @@ void EnergyTracker::update_real_energy(
 #endif
 }
 
-inline real_t EnergyTracker::potential_energy() const noexcept {
+real_t EnergyTracker::potential_energy() const noexcept {
   return V_real_ + V_recip_ + ewald_correction_ + ewald_background_;
 }
 

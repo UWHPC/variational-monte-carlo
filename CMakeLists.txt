@@ -236,6 +236,10 @@ if(BUILD_BENCHMARKS)
   add_executable(optimizer_benchmark benchmarks/optimizer_benchmark.cpp)
   target_link_libraries(optimizer_benchmark PRIVATE vmc_lib)
   target_compile_options(optimizer_benchmark PRIVATE ${VMC_WARNING_OPTIONS})
+
+  add_executable(fixed_b_scan benchmarks/fixed_b_scan.cpp)
+  target_link_libraries(fixed_b_scan PRIVATE vmc_lib)
+  target_compile_options(fixed_b_scan PRIVATE ${VMC_WARNING_OPTIONS})
 endif()
 
 include(CTest)

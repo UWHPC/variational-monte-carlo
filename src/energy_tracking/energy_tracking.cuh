@@ -62,6 +62,8 @@ public:
   ) noexcept;
 
   real_t eval_total_energy(const Particles& particles) const noexcept;
+  real_t kinetic_energy(const Particles& particles) const noexcept;
+  real_t potential_energy() const noexcept;
 
 private:
   Ptr3D<      real_t> g_vector()       noexcept { return {data_[G_X], data_[G_Y], data_[G_Z]}; }
@@ -82,6 +84,4 @@ private:
   [[nodiscard]] real_t*       d_imag_temp()       noexcept { return data_[D_IMAG_TEMP]; }
   [[nodiscard]] real_t const* d_imag_temp() const noexcept { return data_[D_IMAG_TEMP]; }
 
-  real_t kinetic_energy(const Particles& particles) const noexcept;
-  real_t potential_energy() const noexcept;
 };

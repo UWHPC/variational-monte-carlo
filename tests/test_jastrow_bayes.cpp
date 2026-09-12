@@ -28,6 +28,8 @@ int main() {
   const auto result{JastrowOptimizer::evaluate(cfg, settings)};
   if (!result.validated || result.evaluations != 4 || result.failed_evaluations != 0 ||
       result.validation_evaluations != 2 || result.elapsed_seconds < 0.0 ||
+      result.search_epochs != 1 || result.max_search_batch != 2 ||
+      result.exploration_evaluations != 2 || result.replication_evaluations != 0 ||
       !std::isfinite(result.result.energy) || !std::isfinite(result.result.standard_error) ||
       result.result.standard_error < 0.0_r || result.result.optimal_b <= 0.0_r)
     throw std::runtime_error("Bayesian simulation benchmark failed");

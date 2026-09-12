@@ -23,6 +23,22 @@ real_t energy_at_b(std::size_t N, real_t r_s, real_t b, uint64_t seed) {
 
 } // namespace
 
+TEST_CASE("Simulation reports kinetic and potential energy components", "[simulation][energy]") {
+  constexpr std::size_t N{7U};
+  constexpr real_t R_S{5.0_r};
+  const real_t L{box_length_from_rs(R_S, N)};
+  Config config{make_config(N, L, 20U, 40U, L / 10.0_r, 1234U, 35U)};
+
+  Simulation sim{config};
+  const auto summary{sim.run()};
+
+  REQUIRE(std::isfinite(summary.mean_kinetic_energy));
+  REQUIRE(std::isfinite(summary.mean_potential_energy));
+  require_near(summary.mean_energy,
+               summary.mean_kinetic_energy + summary.mean_potential_energy,
+               1e-9_r);
+}
+
 // The optimizer should find a b value, and it should be positive and finite
 TEST_CASE("Optimizer: produces valid b parameter", "[optimizer]") {
   constexpr std::size_t N{7U};

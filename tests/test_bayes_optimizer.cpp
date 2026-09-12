@@ -142,5 +142,25 @@ int main() {
     settled_search.tell(settled_jobs[i].id, {i == 0 ? 0.0 : 1.0, 0.0015});
   check(settled_search.status() == BO::Status::validating);
 
+  auto bounded{settings};
+  bounded.initial_points = 5;
+  bounded.candidate_points = 17;
+  bounded.max_pending = 8;
+  bounded.max_exploration_pending = 4;
+  bounded.max_evaluations = 16;
+  bounded.energy_tolerance = 0.001;
+  BO bounded_search(bounded);
+  auto bounded_initial = bounded_search.ask(8);
+  check(bounded_initial.size() == 4);
+  for (const auto& job : bounded_initial)
+    bounded_search.tell(job.id, {job.parameter == bounded.lower_bound ? 0.0 : 1.0, 0.01});
+  auto bounded_batch = bounded_search.ask(8);
+  std::size_t novel{}, replications{};
+  for (const auto& job : bounded_batch) {
+    novel += job.purpose == BO::Purpose::exploration;
+    replications += job.purpose == BO::Purpose::replication;
+  }
+  check(bounded_batch.size() == 8 && novel <= bounded.max_exploration_pending && replications != 0);
+
   std::cout << "BayesOptimizer scheduling, failure, noisy search and validation checks passed\n";
 }

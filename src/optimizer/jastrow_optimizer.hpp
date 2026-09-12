@@ -36,6 +36,10 @@ public:
     std::size_t validation_evaluations;
     double elapsed_seconds;
     std::size_t search_evaluations;
+    std::size_t search_epochs;
+    std::size_t max_search_batch;
+    std::size_t exploration_evaluations;
+    std::size_t replication_evaluations;
     std::size_t peak_workers;
     double search_seconds;
     double validation_seconds;

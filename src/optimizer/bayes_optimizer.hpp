@@ -49,6 +49,7 @@ public:
     std::size_t initial_points{5};
     std::size_t candidate_points{257};
     std::size_t max_pending{4};
+    std::size_t max_exploration_pending{static_cast<std::size_t>(-1)};
     std::size_t max_evaluations{64}; // Search attempts, including failures.
     bool exact_budget{false}; // Disable early stopping; replicate when the grid is exhausted.
     std::size_t validation_evaluations{4}; // Separate fixed-parameter attempts.
@@ -126,6 +127,7 @@ private:
 
   void update_model();
   [[nodiscard]] bool converged() const;
+  [[nodiscard]] std::size_t choose_replication_candidate() const;
   [[nodiscard]] bool is_pending(std::size_t index) const noexcept { return pending_counts_[index] != 0; }
   [[nodiscard]] std::size_t choose_candidate();
 };

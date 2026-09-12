@@ -295,10 +295,13 @@ JastrowOptimizer::BayesBenchmarkResult JastrowOptimizer::benchmark(
   auto validation_started{started};
   bool has_validation{false};
   std::size_t evaluations{}, failures{}, validation_evaluations{};
+  std::size_t search_epochs{}, max_search_batch{}, exploration_evaluations{}, replication_evaluations{};
   while (true) {
     const auto state{optimizer.status()};
     if (state == BayesOptimizer::Status::complete || state == BayesOptimizer::Status::budget_exhausted) break;
-    const auto jobs{optimizer.ask(options.max_pending - optimizer.pending().size())};
+    const auto jobs{optimizer.pending().empty() ? optimizer.ask(options.max_pending)
+                                                : std::vector<BayesOptimizer::Job>{}};
+    std::size_t search_batch{};
     {
       std::lock_guard lock{mutex};
       for (const auto& job : jobs) {
@@ -309,8 +312,18 @@ JastrowOptimizer::BayesBenchmarkResult JastrowOptimizer::benchmark(
         }
         tasks.push_back(Task{.job = job, .seed = validation ? validation_seeds() : seeds()});
         ++evaluations;
-        if (job.purpose == BayesOptimizer::Purpose::validation) ++validation_evaluations;
+        if (job.purpose == BayesOptimizer::Purpose::validation) {
+          ++validation_evaluations;
+        } else {
+          ++search_batch;
+          exploration_evaluations += job.purpose == BayesOptimizer::Purpose::exploration;
+          replication_evaluations += job.purpose == BayesOptimizer::Purpose::replication;
+        }
       }
+    }
+    if (search_batch) {
+      ++search_epochs;
+      max_search_batch = std::max(max_search_batch, search_batch);
     }
     available.notify_all();
     if (optimizer.pending().empty()) {
@@ -355,6 +368,10 @@ JastrowOptimizer::BayesBenchmarkResult JastrowOptimizer::benchmark(
       .validation_evaluations = validation_evaluations,
       .elapsed_seconds = std::chrono::duration<double>(finished - started).count(),
       .search_evaluations = evaluations - validation_evaluations,
+      .search_epochs = search_epochs,
+      .max_search_batch = max_search_batch,
+      .exploration_evaluations = exploration_evaluations,
+      .replication_evaluations = replication_evaluations,
       .peak_workers = peak.load(),
       .search_seconds = std::chrono::duration<double>((has_validation ? validation_started : finished) - started).count(),
       .validation_seconds = has_validation ? std::chrono::duration<double>(finished - validation_started).count() : 0.0};

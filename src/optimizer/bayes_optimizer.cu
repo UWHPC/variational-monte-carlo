@@ -189,6 +189,7 @@ BayesOptimizer::BayesOptimizer(Settings settings) : settings_{settings}, model_{
       !std::isfinite(settings.upper_bound - settings.lower_bound) ||
       (settings.logarithmic && settings.lower_bound <= 0.0) || settings.initial_points < 2 ||
       settings.candidate_points < settings.initial_points || settings.max_pending == 0 ||
+      settings.max_exploration_pending == 0 ||
       settings.max_evaluations < settings.initial_points || settings.validation_evaluations == 0 ||
       !std::isfinite(settings.energy_tolerance) || settings.energy_tolerance <= 0.0 ||
       !std::isfinite(settings.exploration) || settings.exploration <= 0.0) {
@@ -385,6 +386,19 @@ std::size_t BayesOptimizer::choose_candidate() {
   return selected;
 }
 
+std::size_t BayesOptimizer::choose_replication_candidate() const {
+  std::size_t selected{parameters_.size()};
+  double best{std::numeric_limits<double>::infinity()};
+  for (std::size_t i = 0; i < observations_.size(); ++i) {
+    if (observations_[i].count && predictions_[i].mean < best &&
+        xpu::sqrt(observations_[i].variance()) > settings_.energy_tolerance) {
+      best = predictions_[i].mean;
+      selected = i;
+    }
+  }
+  return selected;
+}
+
 BayesOptimizer::Status BayesOptimizer::status() {
   update_model();
   if (validating_) {
@@ -409,6 +423,8 @@ BayesOptimizer::Status BayesOptimizer::status() {
 std::vector<BayesOptimizer::Job> BayesOptimizer::ask(std::size_t available_slots) {
   std::vector<Job> jobs;
   const std::size_t slots{std::min(available_slots, settings_.max_pending - pending_.size())};
+  std::size_t exploration_pending{static_cast<std::size_t>(std::count_if(
+      pending_.begin(), pending_.end(), [](const Job& job) { return job.purpose == Purpose::exploration; }))};
   jobs.reserve(slots);
   for (std::size_t i = 0; i < slots; ++i) {
     const auto state{status()};
@@ -439,6 +455,13 @@ std::vector<BayesOptimizer::Job> BayesOptimizer::ask(std::size_t available_slots
         index = incumbent_;
       } else {
         purpose = observations_[index].count ? Purpose::replication : Purpose::exploration;
+        if (purpose == Purpose::exploration &&
+            exploration_pending >= settings_.max_exploration_pending) {
+          index = choose_replication_candidate();
+          if (index == parameters_.size())
+            break;
+          purpose = Purpose::replication;
+        }
       }
     }
     const Job job{next_id_, parameters_[index], purpose};
@@ -448,8 +471,10 @@ std::vector<BayesOptimizer::Job> BayesOptimizer::ask(std::size_t available_slots
     ++next_id_;
     if (purpose == Purpose::validation)
       ++validation_attempts_;
-    else
+    else {
       ++search_attempts_;
+      exploration_pending += purpose == Purpose::exploration;
+    }
   }
   return jobs;
 }
