@@ -128,6 +128,7 @@ set(VMC_CUDA_SOURCES
   src/simulation/simulation.cu
   src/energy_tracking/energy_tracking.cu
   src/optimizer/jastrow_optimizer.cu
+  src/optimizer/bayes_optimizer.cu
 )
 
 set(VMC_CXX_SOURCES
@@ -148,6 +149,13 @@ add_library(vmc_lib STATIC
 target_include_directories(vmc_lib PUBLIC src)
 
 target_link_libraries(vmc_lib PUBLIC xpu::xpu)
+find_package(Threads REQUIRED)
+target_link_libraries(vmc_lib PRIVATE Threads::Threads)
+
+# GaussianProcess uses the host LAPACK Cholesky routine with LP64 integers.
+set(BLA_SIZEOF_INTEGER 4)
+find_package(LAPACK REQUIRED)
+target_link_libraries(vmc_lib PRIVATE LAPACK::LAPACK)
 
 if(NOT VMC_CUDA AND VMC_CUDA_EXTENSION_SOURCES)
   set_source_files_properties(
@@ -223,9 +231,26 @@ target_compile_options(vmc PRIVATE
 )
 
 # --- Testing (opt-in via BUILD_TESTING argument) ---
+option(BUILD_BENCHMARKS "Build the optimizer comparison executable" OFF)
+if(BUILD_BENCHMARKS)
+  add_executable(optimizer_benchmark benchmarks/optimizer_benchmark.cpp)
+  target_link_libraries(optimizer_benchmark PRIVATE vmc_lib)
+  target_compile_options(optimizer_benchmark PRIVATE ${VMC_WARNING_OPTIONS})
+endif()
+
 include(CTest)
 
 if(BUILD_TESTING)
+
+  add_executable(vmc_bayes_tests tests/test_bayes_optimizer.cpp)
+  target_link_libraries(vmc_bayes_tests PRIVATE vmc_lib)
+  target_compile_options(vmc_bayes_tests PRIVATE ${VMC_WARNING_OPTIONS})
+  add_test(NAME bayes_optimizer COMMAND vmc_bayes_tests)
+
+  add_executable(vmc_jastrow_bayes_tests tests/test_jastrow_bayes.cpp)
+  target_link_libraries(vmc_jastrow_bayes_tests PRIVATE vmc_lib)
+  target_compile_options(vmc_jastrow_bayes_tests PRIVATE ${VMC_WARNING_OPTIONS})
+  add_test(NAME jastrow_bayes COMMAND vmc_jastrow_bayes_tests)
 
   include(FetchContent)
 
